@@ -158,15 +158,25 @@ export class KosmoAgent implements IKosmoAgent {
   }
 
   // -------------------------------------------------------------------------
-  // Stubs (out of scope for this build -- see IKosmoAgent interface)
+  // generateIcebreaker -- hardcoded welcome, no LLM call
   // -------------------------------------------------------------------------
 
-  async generateIcebreaker(_user: UserContext, _channelName: string): Promise<AgentResponse> {
-    // Stub: proactive greeting logic is out of scope for this build.
-    return {
-      text: `What are you currently trying to compile?`,
-      actions: [],
-    };
+  async generateIcebreaker(user: UserContext, channelName: string): Promise<AgentResponse> {
+    // #introductions: personalised, channel-aware, two-paragraph welcome.
+    // All other channels: short challenger line.
+    const isIntroductions = channelName.toLowerCase() === 'introductions';
+
+    const text = isIntroductions
+      ? [
+          `${user.username}. Welcome to the server.`,
+          `Kosmo is an intent compiler, not a chatbot platform. ` +
+          `So skip the pleasantries and tell us one thing: ` +
+          `what problem are you actually trying to solve?`,
+        ].join('\n\n')
+      : `Good to have you in #${channelName}, ${user.username}. ` +
+        `What are you currently trying to compile?`;
+
+    return { text, actions: [] };
   }
 }
 
