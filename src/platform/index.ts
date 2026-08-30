@@ -1,43 +1,212 @@
 import { 
+  Client, 
+  GatewayIntentBits, 
+  Message, 
+  TextBasedChannel, 
+  PermissionsBitField,
+  GuildMember
+} from 'discord.js';
+import dotenv from 'dotenv';
+import { 
   IKosmoPlatform, 
   InfrastructureBuildReport, 
-  AgentMessage 
+  AgentMessage, 
+  AgentContext, 
+  UserContext 
 } from '../types';
+import { agentStub } from '../agent';
+
+dotenv.config();
 
 /**
- * Stub implementation of IKosmoPlatform.
- * feature/platform will implement the Discord.js client, slash commands (/build_infrastructure),
- * message event listeners, and Discord API actions.
+ * Production-ready IKosmoPlatform implementation using Discord.js v14.
  */
-export class KosmoPlatformStub implements IKosmoPlatform {
+export class KosmoPlatform implements IKosmoPlatform {
+  private client: Client;
+
+  constructor() {
+    this.client = new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers,
+      ],
+    });
+
+    this.registerEventListeners();
+  }
+
+  private registerEventListeners(): void {
+    this.client.on('ready', () => {
+      console.log(`[KosmoPlatform] Bot logged in as ${this.client.user?.tag}`);
+    });
+
+    this.client.on('messageCreate', async (message: Message) => {
+      await this.handleMessageCreate(message);
+    });
+  }
+
+  private async handleMessageCreate(message: Message): Promise<void> {
+    // Ignore messages from bots
+    if (message.author.bot) {
+      return;
+    }
+
+    // Trigger Lock: Ignore all messages except where client.user is explicitly mentioned
+    if (!this.client.user || !message.mentions.has(this.client.user)) {
+      return;
+    }
+
+    try {
+      // Build UserContext
+      const member = message.member;
+      const roles = member ? Array.from(member.roles.cache.values()).map(r => r.name) : [];
+      const isFounder = member 
+        ? member.permissions.has(PermissionsBitField.Flags.Administrator) || roles.some(r => r.toLowerCase().includes('founder'))
+        : false;
+
+      const userContext: UserContext = {
+        id: message.author.id,
+        username: message.author.username,
+        roles,
+        isFounder,
+      };
+
+      // Fetch channel history for context
+      const history = await this.fetchChannelHistory(message.channelId, 15);
+
+      // Extract channel name safely
+      const channelName = 'name' in message.channel && typeof message.channel.name === 'string' 
+        ? message.channel.name 
+        : 'direct-or-thread';
+
+      // Build AgentContext
+      const agentContext: AgentContext = {
+        user: userContext,
+        channelId: message.channelId,
+        channelName,
+        guildId: message.guildId ?? undefined,
+        currentMessage: message.content,
+        history,
+      };
+
+      // Call agent processMessage
+      const response = await agentStub.processMessage(agentContext);
+
+      // If response actions are present, log warning and ignore as per requirements
+      if (response.actions && response.actions.length > 0) {
+        console.warn('[KosmoPlatform] Action handling is not implemented. Ignoring actions:', response.actions);
+      }
+
+      // Reply with the generated text
+      if (response.text) {
+        await message.reply(response.text);
+      }
+    } catch (error) {
+      console.error('[KosmoPlatform] Error processing message:', error);
+      try {
+        await message.reply("I'm sorry, I encountered an issue while processing your request. Please try again shortly.");
+      } catch (replyError) {
+        console.error('[KosmoPlatform] Failed to send fallback apology reply:', replyError);
+      }
+    }
+  }
+
+  /**
+   * Connects the client to Discord using DISCORD_BOT_TOKEN.
+   */
   async start(): Promise<void> {
-    console.log('[KosmoPlatformStub] Discord bot client initialized (stub mode).');
+    const token = process.env.DISCORD_BOT_TOKEN;
+    if (!token) {
+      throw new Error('DISCORD_BOT_TOKEN is not defined in environment variables.');
+    }
+    await this.client.login(token);
   }
 
+  /**
+   * Cleanly destroys the Discord client connection.
+   */
   async stop(): Promise<void> {
-    console.log('[KosmoPlatformStub] Discord bot client stopped (stub mode).');
+    await this.client.destroy();
+    console.log('[KosmoPlatform] Discord client destroyed.');
   }
 
+  /**
+   * Fetches recent message history from a channel and maps to AgentMessage format.
+   */
+  async fetchChannelHistory(channelId: string, limit: number = 15): Promise<AgentMessage[]> {
+    try {
+      const channel = await this.client.channels.fetch(channelId);
+      if (!channel || !channel.isTextBased()) {
+        return [];
+      }
+
+      const textChannel = channel as TextBasedChannel;
+      const messages = await textChannel.messages.fetch({ limit });
+
+      return Array.from(messages.values())
+        .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
+        .map((msg: Message): AgentMessage => ({
+          id: msg.id,
+          authorId: msg.author.id,
+          authorUsername: msg.author.username,
+          isBot: msg.author.bot,
+          content: msg.content,
+          createdAt: msg.createdAt,
+        }));
+    } catch (error) {
+      console.error(`[KosmoPlatform] Error fetching channel history for ${channelId}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Assigns a role to a guild member by role name.
+   */
+  async assignRole(guildId: string, userId: string, roleName: string): Promise<boolean> {
+    try {
+      const guild = await this.client.guilds.fetch(guildId);
+      if (!guild) {
+        console.error(`[KosmoPlatform] Guild not found: ${guildId}`);
+        return false;
+      }
+
+      const member: GuildMember = await guild.members.fetch(userId);
+      if (!member) {
+        console.error(`[KosmoPlatform] Member not found: ${userId} in guild ${guildId}`);
+        return false;
+      }
+
+      const role = guild.roles.cache.find(r => r.name.toLowerCase() === roleName.toLowerCase()) 
+        || (await guild.roles.fetch()).find(r => r.name.toLowerCase() === roleName.toLowerCase());
+
+      if (!role) {
+        console.error(`[KosmoPlatform] Role not found: ${roleName} in guild ${guildId}`);
+        return false;
+      }
+
+      await member.roles.add(role);
+      return true;
+    } catch (error) {
+      console.error(`[KosmoPlatform] Error assigning role ${roleName} to ${userId}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Out of scope stub as required.
+   */
   async buildInfrastructure(guildId: string): Promise<InfrastructureBuildReport> {
-    console.log(`[KosmoPlatformStub] Building infrastructure for guild ${guildId}...`);
     return {
-      success: true,
+      success: false,
       rolesCreated: [],
       categoriesCreated: [],
       channelsCreated: [],
-      errors: []
+      errors: ['buildInfrastructure is out of scope for this build — server is set up manually'],
     };
-  }
-
-  async assignRole(guildId: string, userId: string, roleName: string): Promise<boolean> {
-    console.log(`[KosmoPlatformStub] Assigning role '${roleName}' to user ${userId} in guild ${guildId}.`);
-    return true;
-  }
-
-  async fetchChannelHistory(channelId: string, limit: number = 15): Promise<AgentMessage[]> {
-    console.log(`[KosmoPlatformStub] Fetching last ${limit} messages from channel ${channelId}.`);
-    return [];
   }
 }
 
-export const platformStub = new KosmoPlatformStub();
+export const platform = new KosmoPlatform();
+export const platformStub = platform;
