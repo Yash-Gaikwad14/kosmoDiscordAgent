@@ -1,4 +1,4 @@
-import { agentStub } from './agent';
+import { kosmoAgent } from './agent';
 import { platform } from './platform';
 
 export * from './types';
@@ -7,7 +7,7 @@ export * from './platform';
 
 async function bootstrap() {
   console.log('Kosmo Discord Agent starting...');
-  console.log('Agent implementation:', typeof agentStub.processMessage === 'function');
+  console.log('Agent implementation:', typeof kosmoAgent.processMessage === 'function');
 
   await platform.start();
 

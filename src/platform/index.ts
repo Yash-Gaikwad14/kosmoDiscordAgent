@@ -14,7 +14,7 @@ import {
   AgentContext, 
   UserContext 
 } from '../types';
-import { agentStub } from '../agent';
+import { kosmoAgent } from '../agent';
 
 dotenv.config();
 
@@ -87,7 +87,7 @@ export class KosmoPlatform implements IKosmoPlatform {
         ? message.channel.name
         : 'introductions';
 
-      const response = await agentStub.generateIcebreaker(userContext, channelName);
+      const response = await kosmoAgent.generateIcebreaker(userContext, channelName);
       if (response.text) {
         await message.reply(response.text);
       }
@@ -124,7 +124,7 @@ export class KosmoPlatform implements IKosmoPlatform {
       };
 
       // Check rate limit before processing message
-      const rateLimitResult = agentStub.checkRateLimit(userContext);
+      const rateLimitResult = kosmoAgent.checkRateLimit(userContext);
       if (!rateLimitResult.allowed) {
         if (rateLimitResult.rejectionMessage) {
           await message.reply(rateLimitResult.rejectionMessage);
@@ -151,7 +151,7 @@ export class KosmoPlatform implements IKosmoPlatform {
       };
 
       // Call agent processMessage
-      const response = await agentStub.processMessage(agentContext);
+      const response = await kosmoAgent.processMessage(agentContext);
 
       // If response actions are present, log warning and ignore as per requirements
       if (response.actions && response.actions.length > 0) {
