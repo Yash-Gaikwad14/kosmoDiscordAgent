@@ -1,11 +1,13 @@
-﻿# Environment & Secrets
+# Environment & Secrets
 .env
 .env.local
 *.pem
 *.key
 
-# Dependencies
+# Dependencies & Build
 node_modules/
+dist/
+build/
 __pycache__/
 *.py[cod]
 venv/
