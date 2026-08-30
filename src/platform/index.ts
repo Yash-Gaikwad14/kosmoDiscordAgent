@@ -61,9 +61,10 @@ export class KosmoPlatform implements IKosmoPlatform {
     try {
       // Build UserContext
       const member = message.member;
-      const roles = member ? Array.from(member.roles.cache.values()).map(r => r.name) : [];
+      const roles = member ? Array.from(member.roles.cache.keys()) : [];
+      const founderRoleId = process.env.FOUNDER_ROLE_ID;
       const isFounder = member 
-        ? member.permissions.has(PermissionsBitField.Flags.Administrator) || roles.some(r => r.toLowerCase().includes('founder'))
+        ? (founderRoleId ? member.roles.cache.has(founderRoleId) : false) || member.permissions.has(PermissionsBitField.Flags.Administrator)
         : false;
 
       const userContext: UserContext = {
@@ -72,6 +73,15 @@ export class KosmoPlatform implements IKosmoPlatform {
         roles,
         isFounder,
       };
+
+      // Check rate limit before processing message
+      const rateLimitResult = agentStub.checkRateLimit(userContext);
+      if (!rateLimitResult.allowed) {
+        if (rateLimitResult.rejectionMessage) {
+          await message.reply(rateLimitResult.rejectionMessage);
+        }
+        return;
+      }
 
       // Fetch channel history for context
       const history = await this.fetchChannelHistory(message.channelId, 15);
