@@ -1,0 +1,29 @@
+{
+  "name": "kosmo-discord-agent",
+  "version": "1.0.0",
+  "description": "Kosmo Discord Community Agent and Infrastructure Bot",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "agent",
+    "llm",
+    "kosmo"
+  ],
+  "author": "Kosmo Team",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
