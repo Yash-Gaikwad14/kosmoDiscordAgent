@@ -23,6 +23,7 @@ dotenv.config();
  */
 export class KosmoPlatform implements IKosmoPlatform {
   private client: Client;
+  private welcomedUsers: Set<string> = new Set();
 
   constructor() {
     this.client = new Client({
@@ -43,8 +44,56 @@ export class KosmoPlatform implements IKosmoPlatform {
     });
 
     this.client.on('messageCreate', async (message: Message) => {
+      await this.handleIntroductionsIcebreaker(message);
       await this.handleMessageCreate(message);
     });
+  }
+
+  private async handleIntroductionsIcebreaker(message: Message): Promise<void> {
+    // Ignore messages from bots
+    if (message.author.bot) {
+      return;
+    }
+
+    const introductionsChannelId = process.env.INTRODUCTIONS_CHANNEL_ID;
+    if (!introductionsChannelId || message.channelId !== introductionsChannelId) {
+      return;
+    }
+
+    const userId = message.author.id;
+    if (this.welcomedUsers.has(userId)) {
+      return;
+    }
+
+    // Mark user as welcomed for this bot session
+    this.welcomedUsers.add(userId);
+
+    try {
+      const member = message.member;
+      const roles = member ? Array.from(member.roles.cache.keys()) : [];
+      const founderRoleId = process.env.FOUNDER_ROLE_ID;
+      const isFounder = member 
+        ? (founderRoleId ? member.roles.cache.has(founderRoleId) : false) || member.permissions.has(PermissionsBitField.Flags.Administrator)
+        : false;
+
+      const userContext: UserContext = {
+        id: userId,
+        username: message.author.username,
+        roles,
+        isFounder,
+      };
+
+      const channelName = 'name' in message.channel && typeof message.channel.name === 'string'
+        ? message.channel.name
+        : 'introductions';
+
+      const response = await agentStub.generateIcebreaker(userContext, channelName);
+      if (response.text) {
+        await message.reply(response.text);
+      }
+    } catch (error) {
+      console.error('[KosmoPlatform] Error generating icebreaker:', error);
+    }
   }
 
   private async handleMessageCreate(message: Message): Promise<void> {
