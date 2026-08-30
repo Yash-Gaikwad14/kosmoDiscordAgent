@@ -7,6 +7,7 @@ import {
   RateLimitResult,
 } from '../types';
 import { SYSTEM_PROMPT } from './systemPrompt';
+import { checkRateLimit as _checkRateLimit } from './rateLimit';
 
 // ---------------------------------------------------------------------------
 // LLM API types (OpenAI-compatible chat completions)
@@ -52,7 +53,7 @@ const HISTORY_WINDOW = 20;
  *
  * Scope: src/agent/ only.
  * - processMessage: calls Grok/xAI via OpenAI-compatible chat completions.
- * - checkRateLimit: stub (out of scope for this build).
+ * - checkRateLimit: in-memory sliding-window rate limiter (see rateLimit.ts).
  * - generateIcebreaker: stub (out of scope for this build).
  */
 export class KosmoAgent implements IKosmoAgent {
@@ -149,18 +150,16 @@ export class KosmoAgent implements IKosmoAgent {
   }
 
   // -------------------------------------------------------------------------
-  // Stubs (out of scope for this build -- see IKosmoAgent interface)
+  // Rate limiting (delegates to rateLimit.ts)
   // -------------------------------------------------------------------------
 
-  checkRateLimit(_user: UserContext): RateLimitResult {
-    // Stub: always allow. Rate limiting is a separate prompt / out of scope.
-    return {
-      allowed: true,
-      remaining: 5,
-      limit: 5,
-      resetAt: new Date(Date.now() + 3_600_000),
-    };
+  checkRateLimit(user: UserContext): RateLimitResult {
+    return _checkRateLimit(user);
   }
+
+  // -------------------------------------------------------------------------
+  // Stubs (out of scope for this build -- see IKosmoAgent interface)
+  // -------------------------------------------------------------------------
 
   async generateIcebreaker(_user: UserContext, _channelName: string): Promise<AgentResponse> {
     // Stub: proactive greeting logic is out of scope for this build.
