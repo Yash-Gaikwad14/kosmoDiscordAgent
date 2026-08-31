@@ -1,5 +1,7 @@
+import 'dotenv/config';
 import { kosmoAgent } from './agent';
 import { platform } from './platform';
+
 
 export * from './types';
 export * from './agent';
