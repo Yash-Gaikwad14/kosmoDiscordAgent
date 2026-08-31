@@ -38,8 +38,8 @@ interface ChatCompletionResponse {
 // Config
 // ---------------------------------------------------------------------------
 
-const LLM_MODEL    = process.env.LLM_MODEL    ?? 'grok-beta';
-const LLM_BASE_URL = process.env.LLM_BASE_URL ?? 'https://api.x.ai/v1';
+const LLM_MODEL    = process.env.LLM_MODEL    ?? 'gemini-3.6-flash';
+const LLM_BASE_URL = process.env.LLM_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta/openai';
 
 /** Maximum number of history messages sent to the LLM (oldest-first window). */
 const HISTORY_WINDOW = 20;
