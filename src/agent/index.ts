@@ -187,3 +187,5 @@ export class KosmoAgent implements IKosmoAgent {
 // ---------------------------------------------------------------------------
 
 export const kosmoAgent = new KosmoAgent();
+
+export { processDailyClaim, _resetDailyCooldown, DailyClaimResult, SPARKS_NORMAL, SPARKS_HIGH_KARMA, DAILY_COOLDOWN_MS } from './daily';
