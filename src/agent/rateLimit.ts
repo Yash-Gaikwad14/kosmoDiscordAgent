@@ -50,7 +50,11 @@ const buckets = new Map<string, BucketEntry>();
  */
 function hasHighKarmaRole(roles: string[] | undefined | null): boolean {
   if (!Array.isArray(roles) || roles.length === 0) return false;
-  return roles.includes(HIGH_KARMA_ROLE_ID);
+  const highKarmaRoleId = process.env.HIGH_KARMA_ROLE_ID;
+  return Boolean(
+    (highKarmaRoleId && roles.includes(highKarmaRoleId)) ||
+    roles.some(r => r.toLowerCase() === 'high-karma user' || r.toLowerCase() === 'high karma user')
+  );
 }
 
 /**
@@ -105,3 +109,16 @@ export function checkRateLimit(user: UserContext): RateLimitResult {
     resetAt:   bucket.resetAt,
   };
 }
+
+/**
+ * Resets the rate limit bucket for a user (for testing).
+ */
+export function _resetRateLimit(userId?: string): void {
+  if (userId) {
+    buckets.delete(userId);
+  } else {
+    buckets.clear();
+  }
+}
+
+export { LIMIT_DEFAULT, LIMIT_HIGH_KARMA, WINDOW_MS };

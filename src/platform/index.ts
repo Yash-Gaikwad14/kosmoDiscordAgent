@@ -4,7 +4,12 @@ import {
   Message, 
   TextBasedChannel, 
   PermissionsBitField,
-  GuildMember
+  GuildMember,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  Interaction,
+  ChatInputCommandInteraction
 } from 'discord.js';
 import dotenv from 'dotenv';
 import { 
@@ -14,7 +19,17 @@ import {
   AgentContext, 
   UserContext 
 } from '../types';
-import { kosmoAgent } from '../agent';
+import { 
+  kosmoAgent, 
+  processDailyClaim, 
+  isApprovedGuildRole, 
+  isRestrictedRole,
+  isTicketChannel,
+  processTicketMessage,
+  recordReferral,
+  getReferralStats,
+  getReferralLeaderboard
+} from '../agent';
 
 dotenv.config();
 
@@ -39,14 +54,166 @@ export class KosmoPlatform implements IKosmoPlatform {
   }
 
   private registerEventListeners(): void {
-    this.client.on('ready', () => {
+    this.client.on('ready', async () => {
       console.log(`[KosmoPlatform] Bot logged in as ${this.client.user?.tag}`);
+      await this.registerSlashCommands();
+    });
+
+    this.client.on('interactionCreate', async (interaction: Interaction) => {
+      if (!interaction.isChatInputCommand()) return;
+      await this.handleChatInputCommand(interaction);
     });
 
     this.client.on('messageCreate', async (message: Message) => {
       await this.handleIntroductionsIcebreaker(message);
       await this.handleMessageCreate(message);
     });
+
+    this.client.on('guildMemberAdd', async (member: GuildMember) => {
+      await this.handleGuildMemberAdd(member);
+    });
+  }
+
+  private async registerSlashCommands(): Promise<void> {
+    const token = process.env.DISCORD_BOT_TOKEN;
+    const clientId = process.env.DISCORD_CLIENT_ID;
+    const guildId = process.env.DISCORD_GUILD_ID;
+
+    if (!token || !clientId) {
+      console.warn('[KosmoPlatform] DISCORD_BOT_TOKEN or DISCORD_CLIENT_ID not set; skipping slash command registration.');
+      return;
+    }
+
+    const commands = [
+      new SlashCommandBuilder()
+        .setName('daily')
+        .setDescription('Claim your daily Sparks reward (500 Sparks, or 2,000 for High-Karma users)')
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('referrals')
+        .setDescription('Check your referral count and monthly ranking')
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('leaderboard')
+        .setDescription('View the monthly referral leaderboard')
+        .toJSON(),
+    ];
+
+    try {
+      const rest = new REST({ version: '10' }).setToken(token);
+      if (guildId) {
+        await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+        console.log(`[KosmoPlatform] Registered guild slash commands for ${guildId}`);
+      } else {
+        await rest.put(Routes.applicationCommands(clientId), { body: commands });
+        console.log('[KosmoPlatform] Registered global slash commands');
+      }
+    } catch (error) {
+      console.error('[KosmoPlatform] Failed to register slash commands:', error);
+    }
+  }
+
+  private async handleChatInputCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const { commandName } = interaction;
+
+    if (commandName === 'daily') {
+      await this.handleDailyCommand(interaction);
+    } else if (commandName === 'referrals') {
+      await this.handleReferralsCommand(interaction);
+    } else if (commandName === 'leaderboard') {
+      await this.handleLeaderboardCommand(interaction);
+    }
+  }
+
+  private async handleDailyCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    try {
+      const member = interaction.member instanceof GuildMember 
+        ? interaction.member 
+        : (interaction.guild && interaction.user ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null) : null);
+      
+      const roles = member ? Array.from(member.roles.cache.keys()) : [];
+      const founderRoleId = process.env.FOUNDER_ROLE_ID;
+      const isFounder = member 
+        ? (founderRoleId ? member.roles.cache.has(founderRoleId) : false) || member.permissions.has(PermissionsBitField.Flags.Administrator)
+        : false;
+
+      const userContext: UserContext = {
+        id: interaction.user.id,
+        username: interaction.user.username,
+        roles,
+        isFounder,
+      };
+
+      const result = await processDailyClaim(userContext, interaction.guildId ?? undefined);
+      await interaction.reply({
+        content: result.message,
+        ephemeral: !result.success,
+      });
+    } catch (error) {
+      console.error('[KosmoPlatform] Error handling /daily command:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: 'An unexpected error occurred while processing your daily reward. Please try again shortly.',
+          ephemeral: true,
+        });
+      }
+    }
+  }
+
+  private async handleReferralsCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const stats = getReferralStats(interaction.user.id);
+    const message = [
+      `📊 **Your Referral Statistics**`,
+      `Total Referrals: **${stats.referralCount}**`,
+      `Current Rank: **#${stats.rank}**`,
+      `_Compiles rewards for top referrers are awarded monthly by Team Kosmo._`,
+    ].join('\n');
+
+    await interaction.reply({ content: message, ephemeral: true });
+  }
+
+  private async handleLeaderboardCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const leaderboard = getReferralLeaderboard(10);
+    if (leaderboard.length === 0) {
+      await interaction.reply({
+        content: '🏆 **Monthly Referral Leaderboard**\n\nNo referrals recorded yet this month. Share your invite link to get on the board!',
+        ephemeral: false,
+      });
+      return;
+    }
+
+    const lines = leaderboard.map(
+      entry => `**#${entry.rank}** <@${entry.userId}> — **${entry.count}** referral${entry.count === 1 ? '' : 's'}`
+    );
+
+    const message = [
+      `🏆 **Monthly Referral Leaderboard**`,
+      ...lines,
+      `\n_Top referrers earn actual Kosmo app Compiles at the end of each month!_`,
+    ].join('\n');
+
+    await interaction.reply({ content: message, ephemeral: false });
+  }
+
+  private async handleGuildMemberAdd(member: GuildMember): Promise<void> {
+    try {
+      const guild = member.guild;
+      const invites = await guild.invites.fetch().catch(() => null);
+      if (!invites) return;
+
+      // Find invite with uses
+      for (const invite of invites.values()) {
+        if (invite.inviter && invite.uses && invite.uses > 0) {
+          const result = recordReferral(invite.inviter.id, member.id);
+          if (result.success) {
+            console.log(`[KosmoPlatform] Referral attributed: ${member.user.tag} invited by ${invite.inviter.tag} (Total: ${result.totalReferrals})`);
+          }
+          break;
+        }
+      }
+    } catch (err) {
+      console.error('[KosmoPlatform] Error processing member referral:', err);
+    }
   }
 
   private async handleIntroductionsIcebreaker(message: Message): Promise<void> {
@@ -102,8 +269,16 @@ export class KosmoPlatform implements IKosmoPlatform {
       return;
     }
 
-    // Trigger Lock: Ignore all messages except where client.user is explicitly mentioned
-    if (!this.client.user || !message.mentions.has(this.client.user)) {
+    const channelName = 'name' in message.channel && typeof message.channel.name === 'string' 
+      ? message.channel.name 
+      : 'direct-or-thread';
+
+    const isTicket = isTicketChannel(channelName);
+    const isMentioned = Boolean(this.client.user && message.mentions.has(this.client.user));
+
+    // Trigger Lock: In normal channels, ignore all messages unless explicitly mentioned.
+    // In Ticket Tool private channels, provide Level-1 assistance.
+    if (!isMentioned && !isTicket) {
       return;
     }
 
@@ -123,7 +298,7 @@ export class KosmoPlatform implements IKosmoPlatform {
         isFounder,
       };
 
-      // Check rate limit before processing message
+      // Check rate limit before processing message (applies inside tickets too)
       const rateLimitResult = kosmoAgent.checkRateLimit(userContext);
       if (!rateLimitResult.allowed) {
         if (rateLimitResult.rejectionMessage) {
@@ -135,11 +310,6 @@ export class KosmoPlatform implements IKosmoPlatform {
       // Fetch channel history for context
       const history = await this.fetchChannelHistory(message.channelId, 15);
 
-      // Extract channel name safely
-      const channelName = 'name' in message.channel && typeof message.channel.name === 'string' 
-        ? message.channel.name 
-        : 'direct-or-thread';
-
       // Build AgentContext
       const agentContext: AgentContext = {
         user: userContext,
@@ -150,12 +320,30 @@ export class KosmoPlatform implements IKosmoPlatform {
         history,
       };
 
-      // Call agent processMessage
-      const response = await kosmoAgent.processMessage(agentContext);
+      // Call agent processTicketMessage inside tickets, or standard processMessage in regular channels
+      const response = isTicket 
+        ? await processTicketMessage(agentContext)
+        : await kosmoAgent.processMessage(agentContext);
 
-      // If response actions are present, log warning and ignore as per requirements
+      // Execute dynamic actions (e.g. ASSIGN_ROLE)
       if (response.actions && response.actions.length > 0) {
-        console.warn('[KosmoPlatform] Action handling is not implemented. Ignoring actions:', response.actions);
+        for (const action of response.actions) {
+          if (action.type === 'ASSIGN_ROLE' && action.payload?.roleName) {
+            const roleName = String(action.payload.roleName);
+            const targetUserId = action.targetUserId || message.author.id;
+            const guildId = message.guildId;
+
+            // Strict security checks: Only approved guild roles, never restricted/admin roles
+            if (isApprovedGuildRole(roleName) && !isRestrictedRole(roleName) && guildId) {
+              const assigned = await this.assignRole(guildId, targetUserId, roleName);
+              if (assigned) {
+                console.log(`[KosmoPlatform] Dynamically assigned approved role '${roleName}' to user ${targetUserId}`);
+              }
+            } else {
+              console.warn(`[KosmoPlatform] Rejected role assignment for non-approved or restricted role: '${roleName}'`);
+            }
+          }
+        }
       }
 
       // Reply with the generated text
