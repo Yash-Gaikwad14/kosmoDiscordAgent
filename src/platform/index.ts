@@ -4,7 +4,12 @@ import {
   Message, 
   TextBasedChannel, 
   PermissionsBitField,
-  GuildMember
+  GuildMember,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  Interaction,
+  ChatInputCommandInteraction
 } from 'discord.js';
 import dotenv from 'dotenv';
 import { 
@@ -14,7 +19,7 @@ import {
   AgentContext, 
   UserContext 
 } from '../types';
-import { kosmoAgent } from '../agent';
+import { kosmoAgent, processDailyClaim } from '../agent';
 
 dotenv.config();
 
@@ -39,14 +44,90 @@ export class KosmoPlatform implements IKosmoPlatform {
   }
 
   private registerEventListeners(): void {
-    this.client.on('ready', () => {
+    this.client.on('ready', async () => {
       console.log(`[KosmoPlatform] Bot logged in as ${this.client.user?.tag}`);
+      await this.registerSlashCommands();
+    });
+
+    this.client.on('interactionCreate', async (interaction: Interaction) => {
+      if (!interaction.isChatInputCommand()) return;
+      await this.handleChatInputCommand(interaction);
     });
 
     this.client.on('messageCreate', async (message: Message) => {
       await this.handleIntroductionsIcebreaker(message);
       await this.handleMessageCreate(message);
     });
+  }
+
+  private async registerSlashCommands(): Promise<void> {
+    const token = process.env.DISCORD_BOT_TOKEN;
+    const clientId = process.env.DISCORD_CLIENT_ID;
+    const guildId = process.env.DISCORD_GUILD_ID;
+
+    if (!token || !clientId) {
+      console.warn('[KosmoPlatform] DISCORD_BOT_TOKEN or DISCORD_CLIENT_ID not set; skipping slash command registration.');
+      return;
+    }
+
+    const commands = [
+      new SlashCommandBuilder()
+        .setName('daily')
+        .setDescription('Claim your daily Sparks reward (500 Sparks, or 2,000 for High-Karma users)')
+        .toJSON(),
+    ];
+
+    try {
+      const rest = new REST({ version: '10' }).setToken(token);
+      if (guildId) {
+        await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
+        console.log(`[KosmoPlatform] Registered guild slash commands for ${guildId}`);
+      } else {
+        await rest.put(Routes.applicationCommands(clientId), { body: commands });
+        console.log('[KosmoPlatform] Registered global slash commands');
+      }
+    } catch (error) {
+      console.error('[KosmoPlatform] Failed to register slash commands:', error);
+    }
+  }
+
+  private async handleChatInputCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    if (interaction.commandName !== 'daily') {
+      return;
+    }
+
+    try {
+      const member = interaction.member instanceof GuildMember 
+        ? interaction.member 
+        : (interaction.guild && interaction.user ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null) : null);
+      
+      const roles = member ? Array.from(member.roles.cache.keys()) : [];
+      const founderRoleId = process.env.FOUNDER_ROLE_ID;
+      const isFounder = member 
+        ? (founderRoleId ? member.roles.cache.has(founderRoleId) : false) || member.permissions.has(PermissionsBitField.Flags.Administrator)
+        : false;
+
+      const userContext: UserContext = {
+        id: interaction.user.id,
+        username: interaction.user.username,
+        roles,
+        isFounder,
+      };
+
+      const result = await processDailyClaim(userContext, interaction.guildId ?? undefined);
+      await interaction.reply({
+        content: result.message,
+        ephemeral: !result.success,
+      });
+    } catch (error) {
+      console.error('[KosmoPlatform] Error handling /daily command:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: 'An unexpected error occurred while processing your daily reward. Please try again shortly.',
+          ephemeral: true,
+        });
+      }
+    }
   }
 
   private async handleIntroductionsIcebreaker(message: Message): Promise<void> {
