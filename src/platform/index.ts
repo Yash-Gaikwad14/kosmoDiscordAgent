@@ -19,7 +19,7 @@ import {
   AgentContext, 
   UserContext 
 } from '../types';
-import { kosmoAgent, processDailyClaim } from '../agent';
+import { kosmoAgent, processDailyClaim, isApprovedGuildRole, isRestrictedRole } from '../agent';
 
 dotenv.config();
 
@@ -234,9 +234,25 @@ export class KosmoPlatform implements IKosmoPlatform {
       // Call agent processMessage
       const response = await kosmoAgent.processMessage(agentContext);
 
-      // If response actions are present, log warning and ignore as per requirements
+      // Execute dynamic actions (e.g. ASSIGN_ROLE)
       if (response.actions && response.actions.length > 0) {
-        console.warn('[KosmoPlatform] Action handling is not implemented. Ignoring actions:', response.actions);
+        for (const action of response.actions) {
+          if (action.type === 'ASSIGN_ROLE' && action.payload?.roleName) {
+            const roleName = String(action.payload.roleName);
+            const targetUserId = action.targetUserId || message.author.id;
+            const guildId = message.guildId;
+
+            // Strict security checks: Only approved guild roles, never restricted/admin roles
+            if (isApprovedGuildRole(roleName) && !isRestrictedRole(roleName) && guildId) {
+              const assigned = await this.assignRole(guildId, targetUserId, roleName);
+              if (assigned) {
+                console.log(`[KosmoPlatform] Dynamically assigned approved role '${roleName}' to user ${targetUserId}`);
+              }
+            } else {
+              console.warn(`[KosmoPlatform] Rejected role assignment for non-approved or restricted role: '${roleName}'`);
+            }
+          }
+        }
       }
 
       // Reply with the generated text

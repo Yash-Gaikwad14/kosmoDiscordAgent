@@ -3,11 +3,13 @@ import {
   AgentContext,
   AgentResponse,
   AgentMessage,
+  AgentAction,
   UserContext,
   RateLimitResult,
 } from '../types';
 import { SYSTEM_PROMPT } from './systemPrompt';
 import { checkRateLimit as _checkRateLimit } from './rateLimit';
+import { detectProfessionRole, isApprovedGuildRole, isRestrictedRole, APPROVED_GUILD_ROLES, RESTRICTED_ROLES } from './roleDetection';
 
 // ---------------------------------------------------------------------------
 // LLM API types (OpenAI-compatible chat completions)
@@ -107,9 +109,28 @@ export class KosmoAgent implements IKosmoAgent {
       throw new Error('KosmoAgent: LLM returned an empty response.');
     }
 
+    // Dynamic Profession / Guild Role Detection
+    const detectedRole = detectProfessionRole(context.currentMessage);
+    const actions: AgentAction[] = [];
+
+    if (detectedRole) {
+      const userRoles = context.user.roles || [];
+      const alreadyHasRole = userRoles.some(r => r.toLowerCase() === detectedRole.toLowerCase());
+
+      if (!alreadyHasRole) {
+        actions.push({
+          type: 'ASSIGN_ROLE',
+          targetUserId: context.user.id,
+          payload: {
+            roleName: detectedRole,
+          },
+        });
+      }
+    }
+
     return {
       text,
-      actions: [],
+      actions,
     };
   }
 
@@ -189,3 +210,4 @@ export class KosmoAgent implements IKosmoAgent {
 export const kosmoAgent = new KosmoAgent();
 
 export { processDailyClaim, _resetDailyCooldown, DailyClaimResult, SPARKS_NORMAL, SPARKS_HIGH_KARMA, DAILY_COOLDOWN_MS } from './daily';
+export { detectProfessionRole, isApprovedGuildRole, isRestrictedRole, APPROVED_GUILD_ROLES, RESTRICTED_ROLES, ApprovedGuildRole } from './roleDetection';
