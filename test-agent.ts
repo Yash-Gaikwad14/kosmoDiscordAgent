@@ -121,13 +121,13 @@ const tests: Array<{ label: string; run: () => Promise<void> }> = [
     },
   },
 
-  // ── 6. generateIcebreaker -- other channel ────────────────────────────────
+  // ── 6. generateIcebreaker -- other channel (must be suppressed) ──────────
   {
-    label: 'Icebreaker: #general-chat channel',
+    label: 'Icebreaker: #general-chat channel (should be empty/suppressed)',
     run: async () => {
       const user = makeUser({ username: 'NewBuilder' });
       const res = await kosmoAgent.generateIcebreaker(user, 'general-chat');
-      console.log('Response:', res.text);
+      console.log('Response:', res.text ? `UNEXPECTED: ${res.text}` : '(None - correctly suppressed)');
       console.log('Actions: ', res.actions);
     },
   },

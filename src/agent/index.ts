@@ -3,11 +3,13 @@ import {
   AgentContext,
   AgentResponse,
   AgentMessage,
+  AgentAction,
   UserContext,
   RateLimitResult,
 } from '../types';
 import { SYSTEM_PROMPT } from './systemPrompt';
 import { checkRateLimit as _checkRateLimit } from './rateLimit';
+import { detectProfessionRole, isApprovedGuildRole, isRestrictedRole, APPROVED_GUILD_ROLES, RESTRICTED_ROLES } from './roleDetection';
 
 // ---------------------------------------------------------------------------
 // LLM API types (OpenAI-compatible chat completions)
@@ -107,9 +109,28 @@ export class KosmoAgent implements IKosmoAgent {
       throw new Error('KosmoAgent: LLM returned an empty response.');
     }
 
+    // Dynamic Profession / Guild Role Detection
+    const detectedRole = detectProfessionRole(context.currentMessage);
+    const actions: AgentAction[] = [];
+
+    if (detectedRole) {
+      const userRoles = context.user.roles || [];
+      const alreadyHasRole = userRoles.some(r => r.toLowerCase() === detectedRole.toLowerCase());
+
+      if (!alreadyHasRole) {
+        actions.push({
+          type: 'ASSIGN_ROLE',
+          targetUserId: context.user.id,
+          payload: {
+            roleName: detectedRole,
+          },
+        });
+      }
+    }
+
     return {
       text,
-      actions: [],
+      actions,
     };
   }
 
@@ -162,19 +183,21 @@ export class KosmoAgent implements IKosmoAgent {
   // -------------------------------------------------------------------------
 
   async generateIcebreaker(user: UserContext, channelName: string): Promise<AgentResponse> {
-    // #introductions: personalised, channel-aware, two-paragraph welcome.
-    // All other channels: short challenger line.
-    const isIntroductions = channelName.toLowerCase() === 'introductions';
+    // Icebreaker MUST operate only in #introductions.
+    // All other channels (e.g. #general-chat) must produce NO icebreaker.
+    const normalizedChannel = channelName.toLowerCase().replace(/^[#-]/, '');
+    const isIntroductions = normalizedChannel === 'introductions' || normalizedChannel === 'introduction' || normalizedChannel === 'intro';
 
-    const text = isIntroductions
-      ? [
-          `${user.username}. Welcome to the server.`,
-          `Kosmo is an intent compiler, not a chatbot platform. ` +
-          `So skip the pleasantries and tell us one thing: ` +
-          `what problem are you actually trying to solve?`,
-        ].join('\n\n')
-      : `Good to have you in #${channelName}, ${user.username}. ` +
-        `What are you currently trying to compile?`;
+    if (!isIntroductions) {
+      return { text: '', actions: [] };
+    }
+
+    const text = [
+      `${user.username}. Welcome to the server.`,
+      `Kosmo is an intent compiler, not a chatbot platform. ` +
+      `So skip the pleasantries and tell us one thing: ` +
+      `what problem are you actually trying to solve?`,
+    ].join('\n\n');
 
     return { text, actions: [] };
   }
@@ -185,3 +208,6 @@ export class KosmoAgent implements IKosmoAgent {
 // ---------------------------------------------------------------------------
 
 export const kosmoAgent = new KosmoAgent();
+
+export { processDailyClaim, _resetDailyCooldown, DailyClaimResult, SPARKS_NORMAL, SPARKS_HIGH_KARMA, DAILY_COOLDOWN_MS } from './daily';
+export { detectProfessionRole, isApprovedGuildRole, isRestrictedRole, APPROVED_GUILD_ROLES, RESTRICTED_ROLES, ApprovedGuildRole } from './roleDetection';
