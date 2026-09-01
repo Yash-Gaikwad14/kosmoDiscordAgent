@@ -19,7 +19,17 @@ import {
   AgentContext, 
   UserContext 
 } from '../types';
-import { kosmoAgent, processDailyClaim, isApprovedGuildRole, isRestrictedRole } from '../agent';
+import { 
+  kosmoAgent, 
+  processDailyClaim, 
+  isApprovedGuildRole, 
+  isRestrictedRole,
+  isTicketChannel,
+  processTicketMessage,
+  recordReferral,
+  getReferralStats,
+  getReferralLeaderboard
+} from '../agent';
 
 dotenv.config();
 
@@ -58,6 +68,10 @@ export class KosmoPlatform implements IKosmoPlatform {
       await this.handleIntroductionsIcebreaker(message);
       await this.handleMessageCreate(message);
     });
+
+    this.client.on('guildMemberAdd', async (member: GuildMember) => {
+      await this.handleGuildMemberAdd(member);
+    });
   }
 
   private async registerSlashCommands(): Promise<void> {
@@ -74,6 +88,14 @@ export class KosmoPlatform implements IKosmoPlatform {
       new SlashCommandBuilder()
         .setName('daily')
         .setDescription('Claim your daily Sparks reward (500 Sparks, or 2,000 for High-Karma users)')
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('referrals')
+        .setDescription('Check your referral count and monthly ranking')
+        .toJSON(),
+      new SlashCommandBuilder()
+        .setName('leaderboard')
+        .setDescription('View the monthly referral leaderboard')
         .toJSON(),
     ];
 
@@ -92,10 +114,18 @@ export class KosmoPlatform implements IKosmoPlatform {
   }
 
   private async handleChatInputCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-    if (interaction.commandName !== 'daily') {
-      return;
-    }
+    const { commandName } = interaction;
 
+    if (commandName === 'daily') {
+      await this.handleDailyCommand(interaction);
+    } else if (commandName === 'referrals') {
+      await this.handleReferralsCommand(interaction);
+    } else if (commandName === 'leaderboard') {
+      await this.handleLeaderboardCommand(interaction);
+    }
+  }
+
+  private async handleDailyCommand(interaction: ChatInputCommandInteraction): Promise<void> {
     try {
       const member = interaction.member instanceof GuildMember 
         ? interaction.member 
@@ -127,6 +157,62 @@ export class KosmoPlatform implements IKosmoPlatform {
           ephemeral: true,
         });
       }
+    }
+  }
+
+  private async handleReferralsCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const stats = getReferralStats(interaction.user.id);
+    const message = [
+      `📊 **Your Referral Statistics**`,
+      `Total Referrals: **${stats.referralCount}**`,
+      `Current Rank: **#${stats.rank}**`,
+      `_Compiles rewards for top referrers are awarded monthly by Team Kosmo._`,
+    ].join('\n');
+
+    await interaction.reply({ content: message, ephemeral: true });
+  }
+
+  private async handleLeaderboardCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const leaderboard = getReferralLeaderboard(10);
+    if (leaderboard.length === 0) {
+      await interaction.reply({
+        content: '🏆 **Monthly Referral Leaderboard**\n\nNo referrals recorded yet this month. Share your invite link to get on the board!',
+        ephemeral: false,
+      });
+      return;
+    }
+
+    const lines = leaderboard.map(
+      entry => `**#${entry.rank}** <@${entry.userId}> — **${entry.count}** referral${entry.count === 1 ? '' : 's'}`
+    );
+
+    const message = [
+      `🏆 **Monthly Referral Leaderboard**`,
+      ...lines,
+      `\n_Top referrers earn actual Kosmo app Compiles at the end of each month!_`,
+    ].join('\n');
+
+    await interaction.reply({ content: message, ephemeral: false });
+  }
+
+  private async handleGuildMemberAdd(member: GuildMember): Promise<void> {
+    try {
+      const guild = member.guild;
+      const invites = await guild.invites.fetch().catch(() => null);
+      if (!invites) return;
+
+      // Find invite with uses
+      for (const invite of invites.values()) {
+        if (invite.inviter && invite.uses && invite.uses > 0) {
+          const result = recordReferral(invite.inviter.id, member.id);
+          if (result.success) {
+            console.log(`[KosmoPlatform] Referral attributed: ${member.user.tag} invited by ${invite.inviter.tag} (Total: ${result.totalReferrals})`);
+          }
+          break;
+        }
+      }
+    } catch (err) {
+      console.error('[KosmoPlatform] Error processing member referral:', err);
     }
   }
 
@@ -183,8 +269,16 @@ export class KosmoPlatform implements IKosmoPlatform {
       return;
     }
 
-    // Trigger Lock: Ignore all messages except where client.user is explicitly mentioned
-    if (!this.client.user || !message.mentions.has(this.client.user)) {
+    const channelName = 'name' in message.channel && typeof message.channel.name === 'string' 
+      ? message.channel.name 
+      : 'direct-or-thread';
+
+    const isTicket = isTicketChannel(channelName);
+    const isMentioned = Boolean(this.client.user && message.mentions.has(this.client.user));
+
+    // Trigger Lock: In normal channels, ignore all messages unless explicitly mentioned.
+    // In Ticket Tool private channels, provide Level-1 assistance.
+    if (!isMentioned && !isTicket) {
       return;
     }
 
@@ -204,7 +298,7 @@ export class KosmoPlatform implements IKosmoPlatform {
         isFounder,
       };
 
-      // Check rate limit before processing message
+      // Check rate limit before processing message (applies inside tickets too)
       const rateLimitResult = kosmoAgent.checkRateLimit(userContext);
       if (!rateLimitResult.allowed) {
         if (rateLimitResult.rejectionMessage) {
@@ -216,11 +310,6 @@ export class KosmoPlatform implements IKosmoPlatform {
       // Fetch channel history for context
       const history = await this.fetchChannelHistory(message.channelId, 15);
 
-      // Extract channel name safely
-      const channelName = 'name' in message.channel && typeof message.channel.name === 'string' 
-        ? message.channel.name 
-        : 'direct-or-thread';
-
       // Build AgentContext
       const agentContext: AgentContext = {
         user: userContext,
@@ -231,8 +320,10 @@ export class KosmoPlatform implements IKosmoPlatform {
         history,
       };
 
-      // Call agent processMessage
-      const response = await kosmoAgent.processMessage(agentContext);
+      // Call agent processTicketMessage inside tickets, or standard processMessage in regular channels
+      const response = isTicket 
+        ? await processTicketMessage(agentContext)
+        : await kosmoAgent.processMessage(agentContext);
 
       // Execute dynamic actions (e.g. ASSIGN_ROLE)
       if (response.actions && response.actions.length > 0) {

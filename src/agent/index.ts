@@ -211,3 +211,6 @@ export const kosmoAgent = new KosmoAgent();
 
 export { processDailyClaim, _resetDailyCooldown, DailyClaimResult, SPARKS_NORMAL, SPARKS_HIGH_KARMA, DAILY_COOLDOWN_MS } from './daily';
 export { detectProfessionRole, isApprovedGuildRole, isRestrictedRole, APPROVED_GUILD_ROLES, RESTRICTED_ROLES, ApprovedGuildRole } from './roleDetection';
+export { isTicketChannel, shouldEscalateToHuman, processTicketMessage } from './tickets';
+export { recordReferral, getReferralStats, getReferralLeaderboard, _resetReferralStore, LeaderboardEntry, ReferralRecordResult } from './referrals';
+export { _resetRateLimit, LIMIT_DEFAULT, LIMIT_HIGH_KARMA } from './rateLimit';
