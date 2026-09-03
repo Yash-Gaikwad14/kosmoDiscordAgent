@@ -6,6 +6,12 @@ import { platform } from './platform';
 export * from './types';
 export * from './agent';
 export * from './platform';
+export * from './services/discord/types';
+export * from './services/discord/nl_manager';
+export * from './services/discord/plan';
+export * from './services/discord/permissionValidator';
+export * from './services/discord/policy';
+export * from './commands/kosmo/manage';
 
 async function bootstrap() {
   console.log('Kosmo Discord Agent starting...');

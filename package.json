@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
+    "test": "jest",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts"
   },
@@ -22,7 +23,10 @@
     "dotenv": "^16.4.5"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.11.0",
+    "jest": "^30.5.1",
+    "ts-jest": "^29.4.12",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }
